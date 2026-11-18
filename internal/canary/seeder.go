@@ -3,12 +3,16 @@ package canary
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+
+	_ "github.com/lib/pq"
 
 	"github.com/alexandrmotologa/honeyagent/internal/config"
 )
@@ -95,6 +99,8 @@ func (s *Seeder) SeedStore(ctx context.Context, store string) ([]*SeedResult, er
 			seedErr = s.seedQdrant(ctx, doc)
 		case "chroma":
 			seedErr = s.seedChroma(ctx, doc)
+		case "pgvector":
+			seedErr = s.seedPgVector(ctx, doc)
 		default:
 			seedErr = fmt.Errorf("unsupported vector store target: %s", store)
 		}
@@ -231,6 +237,61 @@ func (s *Seeder) seedChroma(ctx context.Context, doc *DecoyDocument) error {
 	if resp.StatusCode >= 400 {
 		respBytes, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("chroma returned HTTP %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	return nil
+}
+
+func (s *Seeder) seedPgVector(ctx context.Context, doc *DecoyDocument) error {
+	pgcfg := s.cfg.VectorDBs.PgVector
+	if !pgcfg.Enabled || pgcfg.DSN == "" {
+		return fmt.Errorf("pgvector is not enabled or dsn is empty")
+	}
+
+	db, err := sql.Open("postgres", pgcfg.DSN)
+	if err != nil {
+		return fmt.Errorf("failed to open pgvector database: %w", err)
+	}
+	defer db.Close()
+
+	vec := ComputeSyntheticVector(doc.Content, pgcfg.VectorDim)
+	var vecStr strings.Builder
+	vecStr.WriteString("[")
+	for i, v := range vec {
+		if i > 0 {
+			vecStr.WriteString(",")
+		}
+		vecStr.WriteString(fmt.Sprintf("%f", v))
+	}
+	vecStr.WriteString("]")
+
+	// Ensure vector extension and table exist
+	initSQL := fmt.Sprintf(`CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE IF NOT EXISTS %s (
+	id TEXT PRIMARY KEY,
+	title TEXT,
+	category TEXT,
+	content TEXT,
+	token TEXT,
+	embedding vector(%d)
+);`, pgcfg.TableName, pgcfg.VectorDim)
+
+	if _, err := db.ExecContext(ctx, initSQL); err != nil {
+		return fmt.Errorf("failed to initialize pgvector table: %w", err)
+	}
+
+	upsertSQL := fmt.Sprintf(`INSERT INTO %s (id, title, category, content, token, embedding)
+VALUES ($1, $2, $3, $4, $5, $6::vector)
+ON CONFLICT (id) DO UPDATE SET
+	title = EXCLUDED.title,
+	category = EXCLUDED.category,
+	content = EXCLUDED.content,
+	token = EXCLUDED.token,
+	embedding = EXCLUDED.embedding;`, pgcfg.TableName)
+
+	_, err = db.ExecContext(ctx, upsertSQL, doc.ID, doc.Title, doc.Category, doc.Content, doc.Token, vecStr.String())
+	if err != nil {
+		return fmt.Errorf("failed to insert canary point into pgvector: %w", err)
 	}
 
 	return nil

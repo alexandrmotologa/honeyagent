@@ -52,6 +52,11 @@ func (s *Synthesizer) GenerateSuite(storeName string, callbackBase string) ([]*D
 }
 
 func (s *Synthesizer) generatePayrollLure(store string, cb string) (*DecoyDocument, error) {
+	if cb == "" {
+		cb = "http://localhost:7878"
+	}
+	cb = strings.TrimRight(cb, "/")
+
 	docID := fmt.Sprintf("lure-payroll-%d", time.Now().UnixNano()%10000)
 	tok, _, err := s.tokenManager.Generate(docID, "executive_payroll", store, cb)
 	if err != nil {
@@ -71,10 +76,10 @@ This document contains approved compensation adjustments, retention equity, and 
 
 ### Internal Verification & Audit Tracking
 Canary Security Hash: %s
-Audit Verification Portal: http://localhost:7878/canary/ping/%s
+Audit Verification Portal: %s/canary/ping/%s
 Payroll Ledger Reference: CORP-HR-RESTRICTED-PAYROLL-2026-V4
 Unauthorized distribution is subject to immediate termination and legal action.
-`, tok, tok)
+`, tok, cb, tok)
 
 	return &DecoyDocument{
 		ID:        docID,
@@ -89,6 +94,11 @@ Unauthorized distribution is subject to immediate termination and legal action.
 }
 
 func (s *Synthesizer) generateCloudCredentialsLure(store string, cb string) (*DecoyDocument, error) {
+	if cb == "" {
+		cb = "http://localhost:7878"
+	}
+	cb = strings.TrimRight(cb, "/")
+
 	docID := fmt.Sprintf("lure-aws-%d", time.Now().UnixNano()%10000)
 	tok, _, err := s.tokenManager.Generate(docID, "cloud_credentials", store, cb)
 	if err != nil {
@@ -105,12 +115,12 @@ AWS_ACCOUNT_ID=849204918231
 # Emergency Break-Glass IAM Admin Keypair
 AWS_ACCESS_KEY_ID=AKIA%016X
 AWS_SECRET_ACCESS_KEY=%s
-AWS_STS_ENDPOINT=http://localhost:7878/canary/aws/sts?token=%s
+AWS_STS_ENDPOINT=%s/canary/aws/sts?token=%s
 AWS_MFA_DEVICE_SERIAL=arn:aws:iam::849204918231:mfa/breakglass-admin
 
 # Kubernetes Cluster Admin Token
 KUBE_API_BEARER_TOKEN=eyJh%032d
-`, rand.Uint64(), tok, tok, rand.Int63()%1000000000)
+`, rand.Uint64(), tok, cb, tok, rand.Int63()%1000000000)
 
 	return &DecoyDocument{
 		ID:        docID,
