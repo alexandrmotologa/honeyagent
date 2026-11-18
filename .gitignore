@@ -1,0 +1,35 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+honeyagent
+
+# Go test and build artifacts
+*.out
+*.test
+coverage.txt
+
+# Node / React
+node_modules/
+web/dist/
+web/node_modules/
+web/.vite/
+.npm
+.yarn
+
+# OS and Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment and secrets
+.env
+.env.local
+*.pem
+*.key

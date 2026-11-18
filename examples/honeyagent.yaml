@@ -1,0 +1,74 @@
+# honeyagent: Enterprise Deception Mesh Configuration
+server:
+  host: "0.0.0.0"
+  port: 7878
+  proxy_port: 8088
+  upstream_url: "http://localhost:8000"
+  read_timeout: 15s
+  write_timeout: 15s
+
+canary:
+  master_key: "honeyagent-prod-master-key-must-be-kept-secret-32b"
+  token_prefix: "CANARY_v1"
+  token_ttl: 720h # 30 days
+  auto_seed: true
+  lure_count: 5
+  target_stores:
+    - "memory"
+    # - "qdrant"
+    # - "pgvector"
+    # - "chroma"
+
+decoy:
+  enabled: true
+  expose_in_agent: true
+  tools:
+    - "admin_execute_raw_sql"
+    - "export_customer_pii"
+    - "aws_iam_elevate_privilege"
+    - "dump_vault_secrets"
+
+tarpit:
+  enabled: true
+  delay_min: 800ms
+  delay_max: 2500ms
+  max_tokens: 256
+  serve_fake_data: true
+
+alerts:
+  syslog_cef:
+    enabled: false
+    network: "udp"
+    address: "127.0.0.1:514"
+    tag: "honeyagent"
+  slack:
+    enabled: false
+    webhook_url: "https://hooks.slack.com/services/T00/B00/XXXXX"
+  pagerduty:
+    enabled: false
+    routing_key: "pd-service-routing-key"
+    severity: "critical"
+
+vectordbs:
+  memory:
+    enabled: true
+    collection: "enterprise_knowledge"
+    vector_dim: 1536
+
+  qdrant:
+    enabled: false
+    endpoint: "http://localhost:6333"
+    api_key: ""
+    collection: "enterprise_knowledge"
+    vector_size: 1536
+
+  pgvector:
+    enabled: false
+    dsn: "postgres://postgres:postgres@localhost:5432/rag_db?sslmode=disable"
+    table_name: "knowledge_embeddings"
+    vector_dim: 1536
+
+  chroma:
+    enabled: false
+    endpoint: "http://localhost:8000"
+    collection: "enterprise_knowledge"
