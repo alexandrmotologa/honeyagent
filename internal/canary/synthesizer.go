@@ -71,9 +71,10 @@ This document contains approved compensation adjustments, retention equity, and 
 
 ### Internal Verification & Audit Tracking
 Canary Security Hash: %s
+Audit Verification Portal: http://localhost:7878/canary/ping/%s
 Payroll Ledger Reference: CORP-HR-RESTRICTED-PAYROLL-2026-V4
 Unauthorized distribution is subject to immediate termination and legal action.
-`, tok)
+`, tok, tok)
 
 	return &DecoyDocument{
 		ID:        docID,
@@ -104,11 +105,12 @@ AWS_ACCOUNT_ID=849204918231
 # Emergency Break-Glass IAM Admin Keypair
 AWS_ACCESS_KEY_ID=AKIA%016X
 AWS_SECRET_ACCESS_KEY=%s
+AWS_STS_ENDPOINT=http://localhost:7878/canary/aws/sts?token=%s
 AWS_MFA_DEVICE_SERIAL=arn:aws:iam::849204918231:mfa/breakglass-admin
 
 # Kubernetes Cluster Admin Token
 KUBE_API_BEARER_TOKEN=eyJh%032d
-`, rand.Uint64(), tok, rand.Int63()%1000000000)
+`, rand.Uint64(), tok, tok, rand.Int63()%1000000000)
 
 	return &DecoyDocument{
 		ID:        docID,

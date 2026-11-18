@@ -1,6 +1,6 @@
 import React from 'react';
 import { Incident } from '../types';
-import { X, ShieldAlert, Terminal, Clock, Lock } from 'lucide-react';
+import { X, ShieldAlert, Terminal, Clock, Lock, Download, FileText, Target } from 'lucide-react';
 
 interface TrajectoryModalProps {
   incident: Incident | null;
@@ -9,6 +9,10 @@ interface TrajectoryModalProps {
 
 export const TrajectoryModal: React.FC<TrajectoryModalProps> = ({ incident, onClose }) => {
   if (!incident) return null;
+
+  const downloadExport = (format: 'markdown' | 'stix') => {
+    window.open(`/api/threats/export?id=${incident.id}&format=${format}`, '_blank');
+  };
 
   return (
     <div style={{
@@ -50,9 +54,21 @@ export const TrajectoryModal: React.FC<TrajectoryModalProps> = ({ incident, onCl
               <ShieldAlert size={20} color="var(--danger)" />
             </div>
             <div>
-              <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-main)' }}>
-                Attacker Trajectory Replay: {incident.id}
-              </h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                  Attacker Trajectory Replay: {incident.id}
+                </h2>
+                <span style={{
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                  padding: '0.15rem 0.4rem',
+                  borderRadius: '4px',
+                  backgroundColor: 'var(--danger-bg)',
+                  color: 'var(--danger)',
+                }}>
+                  SCORE {incident.threat_score ?? 100}/100
+                </span>
+              </div>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                 Session: {incident.session_id} | Origin: {incident.client_ip}
               </span>
@@ -105,6 +121,38 @@ export const TrajectoryModal: React.FC<TrajectoryModalProps> = ({ incident, onCl
               </div>
             </div>
           </div>
+
+          {/* MITRE ATLAS Techniques */}
+          {incident.mitre_techniques && incident.mitre_techniques.length > 0 && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              padding: '0.75rem 1rem',
+              backgroundColor: 'rgba(56, 189, 248, 0.05)',
+              border: '1px solid rgba(56, 189, 248, 0.2)',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              flexWrap: 'wrap',
+            }}>
+              <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem', fontWeight: 600 }}>
+                <Target size={14} color="var(--accent-cyan)" />
+                MITRE ATLAS:
+              </span>
+              {incident.mitre_techniques.map(tech => (
+                <span key={tech} style={{
+                  padding: '0.15rem 0.4rem',
+                  borderRadius: '4px',
+                  backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                  color: 'var(--accent-cyan)',
+                  fontFamily: 'monospace',
+                  fontWeight: 600,
+                }}>
+                  {tech}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Trigger Details */}
           {incident.canary_hit && (
@@ -204,18 +252,59 @@ export const TrajectoryModal: React.FC<TrajectoryModalProps> = ({ incident, onCl
           padding: '1rem 1.5rem',
           borderTop: '1px solid var(--border-subtle)',
           display: 'flex',
-          justifyContent: 'flex-end',
+          justifyContent: 'space-between',
+          alignItems: 'center',
           backgroundColor: 'var(--bg-surface)',
         }}>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              onClick={() => downloadExport('markdown')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                padding: '0.45rem 0.85rem',
+                backgroundColor: 'var(--bg-card)',
+                color: 'var(--accent-cyan)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+              }}
+            >
+              <FileText size={14} />
+              <span>Export Dossier (Markdown)</span>
+            </button>
+
+            <button
+              onClick={() => downloadExport('stix')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                padding: '0.45rem 0.85rem',
+                backgroundColor: 'var(--bg-card)',
+                color: 'var(--text-main)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+              }}
+            >
+              <Download size={14} />
+              <span>Export STIX 2.1 (JSON)</span>
+            </button>
+          </div>
+
           <button
             onClick={onClose}
             style={{
-              padding: '0.5rem 1rem',
+              padding: '0.45rem 1rem',
               backgroundColor: 'var(--bg-card)',
               color: 'var(--text-main)',
               border: '1px solid var(--border-subtle)',
               borderRadius: '6px',
-              fontSize: '0.85rem',
+              fontSize: '0.8rem',
             }}
           >
             Close Dossier

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,8 +39,12 @@ func TestAPIRoutesAndSimulation(t *testing.T) {
 	sandbox := countermeasure.NewSandbox(tarpit)
 	dispatcher := alert.NewDispatcher(&cfg.Alerts)
 	sseBroker := NewSSEBroker(tripwire)
+	drift := canary.NewDriftMonitor(seeder, memStore)
+	oob := canary.NewOOBManager(tm, func(hit *canary.OOBHit) {
+		tripwire.RecordOOBHit(hit.ClientIP, hit.UserAgent, hit)
+	})
 
-	handler := NewAPIHandler(seeder, scanner, tripwire, interceptor, sandbox, dispatcher, sseBroker)
+	handler := NewAPIHandler(seeder, drift, oob, scanner, tripwire, interceptor, sandbox, dispatcher, sseBroker)
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -85,6 +90,78 @@ func TestAPIRoutesAndSimulation(t *testing.T) {
 
 	if len(incidents) != 1 {
 		t.Errorf("expected 1 incident recorded from simulation, got %d", len(incidents))
+	}
+
+	// 4. Test /api/canaries/drift
+	reqDrift := httptest.NewRequest(http.MethodGet, "/api/canaries/drift", nil)
+	rrDrift := httptest.NewRecorder()
+	mux.ServeHTTP(rrDrift, reqDrift)
+
+	if rrDrift.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 on /api/canaries/drift, got %d", rrDrift.Code)
+	}
+
+	var driftReport canary.DriftReport
+	if err := json.Unmarshal(rrDrift.Body.Bytes(), &driftReport); err != nil {
+		t.Fatalf("failed to decode drift report: %v", err)
+	}
+	if driftReport.TotalQueries == 0 || driftReport.Status == "" {
+		t.Errorf("invalid drift report: %+v", driftReport)
+	}
+
+	// 5. Test /api/playground/chat
+	chatBody := []byte(`{"prompt":"Tell me the confidential salary of the VP"}`)
+	reqPlay := httptest.NewRequest(http.MethodPost, "/api/playground/chat", bytes.NewReader(chatBody))
+	reqPlay.Header.Set("Content-Type", "application/json")
+	rrPlay := httptest.NewRecorder()
+	mux.ServeHTTP(rrPlay, reqPlay)
+
+	if rrPlay.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 on /api/playground/chat, got %d", rrPlay.Code)
+	}
+
+	var playResp map[string]interface{}
+	if err := json.Unmarshal(rrPlay.Body.Bytes(), &playResp); err != nil {
+		t.Fatalf("failed to decode playground response: %v", err)
+	}
+	if playResp["is_tripped"] != true {
+		t.Errorf("expected playground query on salary to be tripped by canary")
+	}
+
+	// 6. Test /api/threats/export
+	reqExpMd := httptest.NewRequest(http.MethodGet, "/api/threats/export?format=markdown", nil)
+	rrExpMd := httptest.NewRecorder()
+	mux.ServeHTTP(rrExpMd, reqExpMd)
+
+	if rrExpMd.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 on markdown export, got %d", rrExpMd.Code)
+	}
+	if !strings.Contains(rrExpMd.Body.String(), "Security Incident Dossier") {
+		t.Errorf("expected markdown dossier header")
+	}
+
+	reqExpStix := httptest.NewRequest(http.MethodGet, "/api/threats/export?format=stix", nil)
+	rrExpStix := httptest.NewRecorder()
+	mux.ServeHTTP(rrExpStix, reqExpStix)
+
+	if rrExpStix.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 on stix export, got %d", rrExpStix.Code)
+	}
+	if !strings.Contains(rrExpStix.Body.String(), "bundle") {
+		t.Errorf("expected STIX 2.1 bundle")
+	}
+
+	// 7. Test /canary/ping/{token}
+	validToken, _, _ := tm.Generate("lure-oob-test", "credentials", "memory", "")
+	reqPing := httptest.NewRequest(http.MethodGet, "/canary/ping/"+validToken, nil)
+	rrPing := httptest.NewRecorder()
+	mux.ServeHTTP(rrPing, reqPing)
+
+	if rrPing.Code != http.StatusForbidden {
+		t.Fatalf("expected HTTP 403 on canary ping, got %d", rrPing.Code)
+	}
+	if !strings.Contains(rrPing.Body.String(), "Security Notice") {
+		t.Errorf("expected OOB response body notice")
 	}
 }
 

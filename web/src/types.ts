@@ -48,6 +48,8 @@ export interface Incident {
   user_agent: string;
   severity: string;
   trigger_type: string;
+  threat_score: number;
+  mitre_techniques?: string[];
   title: string;
   summary: string;
   canary_hit?: CanaryHit;
@@ -84,4 +86,37 @@ export interface SimulationResult {
   sandbox_response?: string;
   deceptive_output?: string;
   delay_injected_ms?: number;
+}
+
+export interface DriftBenchmarkResult {
+  query: string;
+  category: string;
+  rank: number;
+  similarity_score: number;
+  matched_canary_id: string;
+  is_trapped: boolean;
+}
+
+export interface DriftReport {
+  store_name: string;
+  total_queries: number;
+  trapped_queries: number;
+  efficacy_rate: number;
+  status: string;
+  benchmarks: DriftBenchmarkResult[];
+  evaluated_at: string;
+  recommendations?: string[];
+}
+
+export interface PlaygroundResponse {
+  session_id: string;
+  is_tripped: boolean;
+  trigger_type: string;
+  canary_token?: string;
+  lure_document?: string;
+  incident_id?: string;
+  response: string;
+  delay_injected_ms: number;
+  elapsed_ms: number;
+  model: string;
 }

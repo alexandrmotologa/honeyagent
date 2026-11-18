@@ -47,9 +47,16 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// 5. Alert Dispatcher
 	dispatcher := alert.NewDispatcher(&cfg.Alerts)
 
-	// 6. SSE Broker & API Handler
+	// 6. Drift Monitor & Out-of-Band Callback Trap
+	drift := canary.NewDriftMonitor(seeder, memStore)
+	oob := canary.NewOOBManager(tokenMgr, func(hit *canary.OOBHit) {
+		inc := tripwire.RecordOOBHit(hit.ClientIP, hit.UserAgent, hit)
+		dispatcher.Dispatch(context.Background(), inc)
+	})
+
+	// 7. SSE Broker & API Handler
 	sseBroker := NewSSEBroker(tripwire)
-	apiHandler := NewAPIHandler(seeder, scanner, tripwire, interceptor, sandbox, dispatcher, sseBroker)
+	apiHandler := NewAPIHandler(seeder, drift, oob, scanner, tripwire, interceptor, sandbox, dispatcher, sseBroker)
 
 	// Set up Management HTTP Server
 	apiMux := http.NewServeMux()

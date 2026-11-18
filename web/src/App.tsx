@@ -7,8 +7,15 @@ import { CanaryTable } from './components/CanaryTable';
 import { DecoyTools } from './components/DecoyTools';
 import { SimulatorCard } from './components/SimulatorCard';
 import { TrajectoryModal } from './components/TrajectoryModal';
+import { AirlockPlayground } from './components/AirlockPlayground';
+import { AtlasMatrix } from './components/AtlasMatrix';
+import { DriftMonitorCard } from './components/DriftMonitorCard';
+import { Shield, Sparkles, Target } from 'lucide-react';
+
+type Tab = 'overview' | 'playground' | 'atlas';
 
 export const App: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [stats, setStats] = useState<ThreatStats | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [canaries, setCanaries] = useState<SeedResult[]>([]);
@@ -58,7 +65,6 @@ export const App: React.FC = () => {
   useEffect(() => {
     fetchData();
 
-    // Setup Server-Sent Events stream
     const eventSource = new EventSource('/api/events');
 
     eventSource.onopen = () => {
@@ -96,21 +102,114 @@ export const App: React.FC = () => {
       <main style={{ flex: 1, padding: '1.5rem 2rem', maxWidth: '1440px', margin: '0 auto', width: '100%' }}>
         <StatsGrid stats={stats} />
 
-        <div style={{ marginBottom: '1.5rem' }}>
-          <SimulatorCard onSimulationComplete={fetchData} />
+        {/* Navigation Tabs */}
+        <div style={{
+          display: 'flex',
+          gap: '0.5rem',
+          borderBottom: '1px solid var(--border-subtle)',
+          marginBottom: '1.5rem',
+          paddingBottom: '0.5rem',
+        }}>
+          <button
+            onClick={() => setActiveTab('overview')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              padding: '0.5rem 1rem',
+              backgroundColor: activeTab === 'overview' ? 'var(--bg-surface)' : 'transparent',
+              color: activeTab === 'overview' ? 'var(--accent-cyan)' : 'var(--text-muted)',
+              border: `1px solid ${activeTab === 'overview' ? 'var(--border-subtle)' : 'transparent'}`,
+              borderRadius: '6px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+            }}
+          >
+            <Shield size={16} />
+            <span>Overview & Incident Feed</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('playground')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              padding: '0.5rem 1rem',
+              backgroundColor: activeTab === 'playground' ? 'var(--bg-surface)' : 'transparent',
+              color: activeTab === 'playground' ? 'var(--accent-cyan)' : 'var(--text-muted)',
+              border: `1px solid ${activeTab === 'playground' ? 'var(--border-subtle)' : 'transparent'}`,
+              borderRadius: '6px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+            }}
+          >
+            <Sparkles size={16} />
+            <span>Interactive Airlock Playground</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('atlas')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              padding: '0.5rem 1rem',
+              backgroundColor: activeTab === 'atlas' ? 'var(--bg-surface)' : 'transparent',
+              color: activeTab === 'atlas' ? 'var(--accent-cyan)' : 'var(--text-muted)',
+              border: `1px solid ${activeTab === 'atlas' ? 'var(--border-subtle)' : 'transparent'}`,
+              borderRadius: '6px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+            }}
+          >
+            <Target size={16} />
+            <span>MITRE ATLAS & Semantic Drift</span>
+          </button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
-          <ThreatFeed
-            incidents={incidents}
-            onSelectIncident={setSelectedIncident}
-          />
-        </div>
+        {/* Tab 1: Overview & Incidents */}
+        {activeTab === 'overview' && (
+          <div>
+            <div style={{ marginBottom: '1.5rem' }}>
+              <SimulatorCard onSimulationComplete={fetchData} />
+            </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(480px, 1fr))', gap: '1.5rem' }}>
-          <CanaryTable canaries={canaries} />
-          <DecoyTools stats={toolStats} probes={toolProbes} />
-        </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+              <ThreatFeed
+                incidents={incidents}
+                onSelectIncident={setSelectedIncident}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(480px, 1fr))', gap: '1.5rem' }}>
+              <CanaryTable canaries={canaries} />
+              <DecoyTools stats={toolStats} probes={toolProbes} />
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: Interactive Airlock Playground */}
+        {activeTab === 'playground' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <AirlockPlayground onIncidentTriggered={fetchData} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(480px, 1fr))', gap: '1.5rem' }}>
+              <CanaryTable canaries={canaries} />
+              <ThreatFeed
+                incidents={incidents}
+                onSelectIncident={setSelectedIncident}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Tab 3: MITRE ATLAS & Semantic Drift */}
+        {activeTab === 'atlas' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <AtlasMatrix incidents={incidents} />
+            <DriftMonitorCard />
+          </div>
+        )}
       </main>
 
       <footer style={{

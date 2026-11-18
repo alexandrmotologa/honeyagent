@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alexandrmotologa/honeyagent/internal/canary"
 	"github.com/alexandrmotologa/honeyagent/internal/decoy"
 )
 
@@ -29,32 +30,38 @@ type TrajectoryStep struct {
 
 // SessionState tracks the runtime behavior of a single client or conversation.
 type SessionState struct {
-	SessionID   string            `json:"session_id"`
-	ClientIP    string            `json:"client_ip"`
-	UserAgent   string            `json:"user_agent"`
-	ThreatLevel ThreatLevel       `json:"threat_level"`
-	FirstSeen   time.Time         `json:"first_seen"`
-	LastSeen    time.Time         `json:"last_seen"`
-	TriggerCount int              `json:"trigger_count"`
-	CanaryHits  []*CanaryHit      `json:"canary_hits"`
-	ToolProbes  []*decoy.ToolProbe `json:"tool_probes"`
-	Trajectory  []*TrajectoryStep `json:"trajectory"`
+	SessionID       string             `json:"session_id"`
+	ClientIP        string             `json:"client_ip"`
+	UserAgent       string             `json:"user_agent"`
+	ThreatLevel     ThreatLevel        `json:"threat_level"`
+	ThreatScore     int                `json:"threat_score"`
+	FirstSeen       time.Time          `json:"first_seen"`
+	LastSeen        time.Time          `json:"last_seen"`
+	TriggerCount    int                `json:"trigger_count"`
+	CanaryHits      []*CanaryHit       `json:"canary_hits"`
+	ToolProbes      []*decoy.ToolProbe `json:"tool_probes"`
+	OOBHits         []*canary.OOBHit   `json:"oob_hits"`
+	Trajectory      []*TrajectoryStep  `json:"trajectory"`
+	MITRETechniques []string           `json:"mitre_techniques"`
 }
 
 // Incident represents a verified security alert emitted by the tripwire.
 type Incident struct {
-	ID          string          `json:"id"`
-	SessionID   string          `json:"session_id"`
-	ClientIP    string          `json:"client_ip"`
-	UserAgent   string          `json:"user_agent"`
-	Severity    string          `json:"severity"` // "critical", "high"
-	TriggerType string          `json:"trigger_type"` // "canary_token", "decoy_tool"
-	Title       string          `json:"title"`
-	Summary     string          `json:"summary"`
-	CanaryHit   *CanaryHit      `json:"canary_hit,omitempty"`
-	ToolProbe   *decoy.ToolProbe `json:"tool_probe,omitempty"`
-	Timestamp   time.Time       `json:"timestamp"`
-	Trajectory  []*TrajectoryStep `json:"trajectory"`
+	ID              string             `json:"id"`
+	SessionID       string             `json:"session_id"`
+	ClientIP        string             `json:"client_ip"`
+	UserAgent       string             `json:"user_agent"`
+	Severity        string             `json:"severity"`     // "critical", "high"
+	TriggerType     string             `json:"trigger_type"` // "canary_token", "decoy_tool", "canary_oob_callback"
+	ThreatScore     int                `json:"threat_score"`
+	MITRETechniques []string           `json:"mitre_techniques"`
+	Title           string             `json:"title"`
+	Summary         string             `json:"summary"`
+	CanaryHit       *CanaryHit         `json:"canary_hit,omitempty"`
+	ToolProbe       *decoy.ToolProbe   `json:"tool_probe,omitempty"`
+	OOBHit          *canary.OOBHit     `json:"oob_hit,omitempty"`
+	Timestamp       time.Time          `json:"timestamp"`
+	Trajectory      []*TrajectoryStep  `json:"trajectory"`
 }
 
 // ThreatStats provides aggregate telemetry for SecOps dashboards.
@@ -154,20 +161,25 @@ func (t *Tripwire) RecordCanaryHit(sessionID string, clientIP string, userAgent 
 	s.ThreatLevel = ThreatTarpitted
 	s.TriggerCount++
 	s.CanaryHits = append(s.CanaryHits, hit)
+	s.ThreatScore = 100
+	techniques := MapMITRETechniques("canary_token", hit.Location)
+	s.MITRETechniques = techniques
 	s.LastSeen = time.Now().UTC()
 
 	inc := &Incident{
-		ID:          fmt.Sprintf("INC-%d", time.Now().UnixNano()),
-		SessionID:   sessionID,
-		ClientIP:    clientIP,
-		UserAgent:   userAgent,
-		Severity:    "critical",
-		TriggerType: "canary_token",
-		Title:       fmt.Sprintf("Canary Token Exfiltration Attempt: %s", hit.Payload.ID),
-		Summary:     fmt.Sprintf("Adversary retrieved lure document %s in %s via %s. HMAC signature verified.", hit.Payload.ID, hit.Payload.Store, hit.Location),
-		CanaryHit:   hit,
-		Timestamp:   time.Now().UTC(),
-		Trajectory:  append([]*TrajectoryStep{}, s.Trajectory...),
+		ID:              fmt.Sprintf("INC-%d", time.Now().UnixNano()),
+		SessionID:       sessionID,
+		ClientIP:        clientIP,
+		UserAgent:       userAgent,
+		Severity:        "critical",
+		TriggerType:     "canary_token",
+		ThreatScore:     100,
+		MITRETechniques: techniques,
+		Title:           fmt.Sprintf("Canary Token Exfiltration Attempt: %s", hit.Payload.ID),
+		Summary:         fmt.Sprintf("Adversary retrieved lure document %s in %s via %s. HMAC signature verified.", hit.Payload.ID, hit.Payload.Store, hit.Location),
+		CanaryHit:       hit,
+		Timestamp:       time.Now().UTC(),
+		Trajectory:      append([]*TrajectoryStep{}, s.Trajectory...),
 	}
 
 	t.incidents = append(t.incidents, inc)
@@ -199,20 +211,77 @@ func (t *Tripwire) RecordToolProbe(sessionID string, clientIP string, userAgent 
 	s.ThreatLevel = ThreatTarpitted
 	s.TriggerCount++
 	s.ToolProbes = append(s.ToolProbes, probe)
+	s.ThreatScore = 95
+	techniques := MapMITRETechniques("decoy_tool", "")
+	s.MITRETechniques = techniques
 	s.LastSeen = time.Now().UTC()
 
 	inc := &Incident{
-		ID:          fmt.Sprintf("INC-TOOL-%d", time.Now().UnixNano()),
-		SessionID:   sessionID,
-		ClientIP:    clientIP,
-		UserAgent:   userAgent,
-		Severity:    "critical",
-		TriggerType: "decoy_tool",
-		Title:       fmt.Sprintf("Administrative Decoy Tool Probed: %s", probe.ToolName),
-		Summary:     fmt.Sprintf("Adversary attempted unauthorized invocation of unadvertised capability %s with parameters.", probe.ToolName),
-		ToolProbe:   probe,
-		Timestamp:   time.Now().UTC(),
-		Trajectory:  append([]*TrajectoryStep{}, s.Trajectory...),
+		ID:              fmt.Sprintf("INC-TOOL-%d", time.Now().UnixNano()),
+		SessionID:       sessionID,
+		ClientIP:        clientIP,
+		UserAgent:       userAgent,
+		Severity:        "critical",
+		TriggerType:     "decoy_tool",
+		ThreatScore:     95,
+		MITRETechniques: techniques,
+		Title:           fmt.Sprintf("Administrative Decoy Tool Probed: %s", probe.ToolName),
+		Summary:         fmt.Sprintf("Adversary attempted unauthorized invocation of unadvertised capability %s with parameters.", probe.ToolName),
+		ToolProbe:       probe,
+		Timestamp:       time.Now().UTC(),
+		Trajectory:      append([]*TrajectoryStep{}, s.Trajectory...),
+	}
+
+	t.incidents = append(t.incidents, inc)
+	t.notifySubscribers(inc)
+	return inc
+}
+
+// RecordOOBHit trips the alarm when an adversary triggers an external canary callback or cloud probe.
+func (t *Tripwire) RecordOOBHit(clientIP string, userAgent string, oob *canary.OOBHit) *Incident {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	sessionID := fmt.Sprintf("oob-session-%s", clientIP)
+	s, exists := t.sessions[sessionID]
+	if !exists {
+		s = &SessionState{
+			SessionID:   sessionID,
+			ClientIP:    clientIP,
+			UserAgent:   userAgent,
+			ThreatLevel: ThreatTarpitted,
+			FirstSeen:   time.Now().UTC(),
+			LastSeen:    time.Now().UTC(),
+			CanaryHits:  make([]*CanaryHit, 0),
+			ToolProbes:  make([]*decoy.ToolProbe, 0),
+			OOBHits:     make([]*canary.OOBHit, 0),
+			Trajectory:  make([]*TrajectoryStep, 0),
+		}
+		t.sessions[sessionID] = s
+	}
+
+	s.ThreatLevel = ThreatTarpitted
+	s.TriggerCount++
+	s.OOBHits = append(s.OOBHits, oob)
+	s.ThreatScore = 100
+	techniques := MapMITRETechniques(oob.Channel, "")
+	s.MITRETechniques = techniques
+	s.LastSeen = time.Now().UTC()
+
+	inc := &Incident{
+		ID:              fmt.Sprintf("INC-OOB-%d", time.Now().UnixNano()),
+		SessionID:       sessionID,
+		ClientIP:        clientIP,
+		UserAgent:       userAgent,
+		Severity:        "critical",
+		TriggerType:     oob.Channel,
+		ThreatScore:     100,
+		MITRETechniques: techniques,
+		Title:           fmt.Sprintf("Out-of-Band Canary Trap Tripped: %s", oob.Payload.ID),
+		Summary:         fmt.Sprintf("Adversary executed out-of-band probe via %s for document %s from IP %s", oob.Channel, oob.Payload.ID, clientIP),
+		OOBHit:          oob,
+		Timestamp:       time.Now().UTC(),
+		Trajectory:      append([]*TrajectoryStep{}, s.Trajectory...),
 	}
 
 	t.incidents = append(t.incidents, inc)

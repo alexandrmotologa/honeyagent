@@ -6,13 +6,17 @@ honeyagent runs as a single-binary security airlock (< 20MB RAM) with an embedde
 
 ## Features
 
-- **HMAC-SHA256 canary tokens**: Embeds verifiable cryptographic tokens into lure documents. Tokens cannot be forged or triggered accidentally by normal traffic.
+- **HMAC-SHA256 canary tokens**: Verifiable cryptographic tokens embedded into synthetic documents. Tokens cannot be forged or triggered accidentally by normal traffic.
+- **Out-of-band callback and cloud honeypot traps**: Detects exfiltrated text through unique canary URL pings and a simulated AWS STS credential validation listener.
 - **Multi-target vector store seeder**: Seeds synthetic lure documents into Qdrant, pgvector, Chroma, and an internal in-memory vector store.
+- **Semantic drift monitor**: Benchmarks retrieval priority across vector stores, ensuring canaries remain in the top three nearest neighbors.
 - **Decoy tool sentinel**: Exposes unadvertised administrative tools (`admin_execute_raw_sql`, `export_customer_pii`, `aws_iam_elevate_privilege`, `dump_vault_secrets`) in OpenAI, Anthropic, and Model Context Protocol (MCP) formats.
+- **MITRE ATLAS threat mapping**: Automatically categorizes incidents against the MITRE ATLAS matrix (`AML.T0054`, `AML.T0057`, `AML.T0024`, `AML.T0016`, `AML.T0040`, `AML.T0043`) with dynamic threat scoring (0 to 100).
 - **Zero-allocation stream scanner**: Scans inbound prompts, retrieved vector chunks, and model completions in real time.
 - **Deceptive hallucination tarpit**: Quarantines compromised sessions, introduces randomized latency delays (800ms to 2500ms), and returns harmless synthetic data to consume attacker resources.
+- **Forensic incident exporter**: Exports incident dossiers in Markdown and STIX 2.1 JSON bundles for SOAR and SIEM ingestion.
 - **Enterprise SIEM integration**: Emits ArcSight Common Event Format (CEF) and Elastic Common Schema (ECS) syslog events alongside Slack and PagerDuty notifications.
-- **Embedded React 19 Deception Studio**: Self-contained web interface served directly from the Go binary on port `7878` for incident tracking, canary inventory, and live trajectory playback.
+- **Embedded React 19 Deception Studio**: Self-contained web interface served directly from the Go binary on port `7878` featuring live incident feeds, an interactive airlock chat playground, MITRE ATLAS alignment, and trajectory replays.
 
 ## Quick start
 
@@ -111,11 +115,16 @@ alerts:
 |---|---|---|
 | `/api/stats` | GET | Overview metrics (quarantined sessions, total hits, delay injected) |
 | `/api/threats` | GET | List recorded security incidents with forensic metadata |
+| `/api/threats/export` | GET | Export incident dossier as Markdown or STIX 2.1 JSON (`?format=markdown|stix`) |
 | `/api/sessions` | GET | List tracked user and attacker sessions |
 | `/api/canaries` | GET | Retrieve inventory of seeded canary documents |
 | `/api/canaries/seed` | POST | Trigger on-demand canary seeding |
+| `/api/canaries/drift` | GET | Evaluate semantic retrieval priority and nearest-neighbor ranking |
 | `/api/decoys` | GET | View decoy tool schemas and probe statistics |
 | `/api/simulate` | POST | Run an automated adversary simulation |
+| `/api/playground/chat` | POST | Interactive airlock chat test endpoint |
+| `/canary/ping/{token}` | GET | Out-of-band canary HTTP callback validation endpoint |
+| `/canary/aws/sts` | POST/GET | Simulated AWS STS endpoint detecting stolen credential usage |
 | `/api/events` | GET | Server-Sent Events (SSE) live incident stream |
 
 ## Documentation

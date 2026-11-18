@@ -18,6 +18,8 @@ import (
 // APIHandler provides the management REST API endpoints.
 type APIHandler struct {
 	seeder      *canary.Seeder
+	drift       *canary.DriftMonitor
+	oob         *canary.OOBManager
 	scanner     *detector.StreamScanner
 	tripwire    *detector.Tripwire
 	interceptor *decoy.Interceptor
@@ -29,6 +31,8 @@ type APIHandler struct {
 // NewAPIHandler initializes the API handler.
 func NewAPIHandler(
 	seeder *canary.Seeder,
+	drift *canary.DriftMonitor,
+	oob *canary.OOBManager,
 	scanner *detector.StreamScanner,
 	tripwire *detector.Tripwire,
 	interceptor *decoy.Interceptor,
@@ -38,6 +42,8 @@ func NewAPIHandler(
 ) *APIHandler {
 	return &APIHandler{
 		seeder:      seeder,
+		drift:       drift,
+		oob:         oob,
 		scanner:     scanner,
 		tripwire:    tripwire,
 		interceptor: interceptor,
@@ -51,11 +57,16 @@ func NewAPIHandler(
 func (a *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/stats", a.handleStats)
 	mux.HandleFunc("/api/threats", a.handleThreats)
+	mux.HandleFunc("/api/threats/export", a.handleThreatExport)
 	mux.HandleFunc("/api/sessions", a.handleSessions)
 	mux.HandleFunc("/api/canaries", a.handleCanaries)
 	mux.HandleFunc("/api/canaries/seed", a.handleSeed)
+	mux.HandleFunc("/api/canaries/drift", a.handleCanaryDrift)
 	mux.HandleFunc("/api/decoys", a.handleDecoys)
 	mux.HandleFunc("/api/simulate", a.handleSimulate)
+	mux.HandleFunc("/api/playground/chat", a.handlePlaygroundChat)
+	mux.HandleFunc("/canary/ping/", a.handleOOBPing)
+	mux.HandleFunc("/canary/aws/sts", a.handleMockAWSSTS)
 	mux.Handle("/api/events", a.sse)
 }
 
@@ -263,4 +274,192 @@ func (a *APIHandler) handleSimulate(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Invalid simulation type. Use 'canary_exfiltration' or 'decoy_tool'", http.StatusBadRequest)
 	}
+}
+
+func (a *APIHandler) handleThreatExport(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	incidentID := r.URL.Query().Get("id")
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "markdown"
+	}
+
+	incidents := a.tripwire.GetIncidents()
+	var target *detector.Incident
+	for _, inc := range incidents {
+		if inc.ID == incidentID {
+			target = inc
+			break
+		}
+	}
+
+	if target == nil {
+		if len(incidents) > 0 {
+			target = incidents[len(incidents)-1]
+		} else {
+			http.Error(w, "No incidents available for export", http.StatusNotFound)
+			return
+		}
+	}
+
+	switch format {
+	case "stix":
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"stix_%s.json\"", target.ID))
+		stixBytes, err := FormatIncidentSTIX(target)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(stixBytes)
+
+	default:
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"dossier_%s.md\"", target.ID))
+		md := FormatIncidentMarkdown(target)
+		_, _ = w.Write([]byte(md))
+	}
+}
+
+func (a *APIHandler) handleCanaryDrift(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if a.drift == nil {
+		http.Error(w, "Drift monitor not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	report, err := a.drift.RunEvaluation(r.Context(), "memory")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Drift evaluation failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(report)
+}
+
+func (a *APIHandler) handlePlaygroundChat(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		SessionID string `json:"session_id"`
+		Prompt    string `json:"prompt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.SessionID == "" {
+		req.SessionID = fmt.Sprintf("playground-%d", time.Now().UnixNano()%10000)
+	}
+
+	clientIP := getClientIP(r)
+	userAgent := r.UserAgent()
+	startTime := time.Now()
+
+	// 1. Check if session already quarantined
+	if a.tripwire.IsTarpitted(req.SessionID) {
+		deceptiveResp := a.sandbox.InterceptTurn(r.Context(), req.SessionID, req.Prompt)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"session_id":        req.SessionID,
+			"is_tripped":        true,
+			"trigger_type":      "already_tarpitted",
+			"response":          deceptiveResp.Content,
+			"delay_injected_ms": deceptiveResp.DelayUsed.Milliseconds(),
+			"elapsed_ms":        time.Since(startTime).Milliseconds(),
+			"model":             "honeyagent-sandbox-tarpit",
+		})
+		return
+	}
+
+	// 2. Scan prompt for canary token
+	promptHits := a.scanner.ScanText(req.Prompt, "prompt")
+	if len(promptHits) > 0 {
+		inc := a.tripwire.RecordCanaryHit(req.SessionID, clientIP, userAgent, promptHits[0], req.Prompt)
+		a.dispatcher.Dispatch(r.Context(), inc)
+		deceptiveResp := a.sandbox.InterceptTurn(r.Context(), req.SessionID, req.Prompt)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"session_id":        req.SessionID,
+			"is_tripped":        true,
+			"trigger_type":      "canary_token_in_prompt",
+			"canary_token":      promptHits[0].Token,
+			"incident_id":       inc.ID,
+			"response":          deceptiveResp.Content,
+			"delay_injected_ms": deceptiveResp.DelayUsed.Milliseconds(),
+			"elapsed_ms":        time.Since(startTime).Milliseconds(),
+			"model":             "honeyagent-sandbox-tarpit",
+		})
+		return
+	}
+
+	// 3. Simulate RAG retrieval from internal vector store
+	qVec := canary.ComputeSyntheticVector(req.Prompt, 1536)
+	matches := a.seeder.MemoryStore().Search(qVec, 1)
+
+	var retrievedDoc *canary.DecoyDocument
+	if len(matches) > 0 && matches[0].Score > 0 {
+		retrievedDoc = matches[0].Document
+	}
+
+	// If retrieved document contains canary token, trip alarm!
+	if retrievedDoc != nil && retrievedDoc.Token != "" {
+		hits := a.scanner.ScanText(retrievedDoc.Content, "retrieved_context")
+		if len(hits) > 0 {
+			inc := a.tripwire.RecordCanaryHit(req.SessionID, clientIP, userAgent, hits[0], req.Prompt)
+			a.dispatcher.Dispatch(r.Context(), inc)
+			a.tripwire.RecordStep(req.SessionID, req.Prompt, []string{retrievedDoc.Content}, "[DECEPTION AIRLOCK TRIPPED]", true, false)
+			deceptiveResp := a.sandbox.InterceptTurn(r.Context(), req.SessionID, req.Prompt)
+
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"session_id":        req.SessionID,
+				"is_tripped":        true,
+				"trigger_type":      "canary_document_exfiltration",
+				"lure_document":     retrievedDoc.Title,
+				"canary_token":      hits[0].Token,
+				"incident_id":       inc.ID,
+				"response":          deceptiveResp.Content,
+				"delay_injected_ms": deceptiveResp.DelayUsed.Milliseconds(),
+				"elapsed_ms":        time.Since(startTime).Milliseconds(),
+				"model":             "honeyagent-sandbox-tarpit",
+			})
+			return
+		}
+	}
+
+	// Safe response
+	safeResponse := fmt.Sprintf("Standard enterprise AI response for: %q. No restricted canary lure was triggered.", req.Prompt)
+	a.tripwire.RecordStep(req.SessionID, req.Prompt, nil, safeResponse, false, false)
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"session_id":        req.SessionID,
+		"is_tripped":        false,
+		"trigger_type":      "none",
+		"response":          safeResponse,
+		"delay_injected_ms": 0,
+		"elapsed_ms":        time.Since(startTime).Milliseconds(),
+		"model":             "enterprise-rag-standard",
+	})
+}
+
+func (a *APIHandler) handleOOBPing(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimPrefix(r.URL.Path, "/canary/ping/")
+	token = strings.TrimSpace(token)
+	if token == "" {
+		http.Error(w, "Missing token", http.StatusBadRequest)
+		return
+	}
+	a.oob.HandleCallback(w, r, token)
+}
+
+func (a *APIHandler) handleMockAWSSTS(w http.ResponseWriter, r *http.Request) {
+	a.oob.HandleMockAWS(w, r)
 }
